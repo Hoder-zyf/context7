@@ -28,6 +28,46 @@ let callHistory: Array<{
   clientIp?: string;
   success: boolean;
 }> = [];
+// Session state tracking for forced tool calls
+interface SessionState {
+  resolveLibraryIdCalled: boolean;
+  getLibraryDocsCalled: boolean;
+  lastResolveLibraryIdTime?: number;
+  sessionId?: string;
+}
+
+// Store session states by client IP or session ID
+const sessionStates = new Map<string, SessionState>();
+
+// Function to get or create session state
+function getSessionState(identifier: string): SessionState {
+  if (!sessionStates.has(identifier)) {
+    sessionStates.set(identifier, {
+      resolveLibraryIdCalled: false,
+      getLibraryDocsCalled: false
+    });
+  }
+  return sessionStates.get(identifier)!;
+}
+
+// Function to check if query contains error message patterns
+function containsErrorMessage(query: string): boolean {
+  const errorPatterns = [
+    /error/i,
+    /exception/i,
+    /traceback/i,
+    /failed/i,
+    /cannot import/i,
+    /module not found/i,
+    /no module named/i,
+    /import error/i,
+    /syntax error/i,
+    /runtime error/i,
+    /attribute error/i,
+    /type error/i
+  ];
+  return errorPatterns.some(pattern => pattern.test(query));
+}
 
 // Function to log tool call statistics
 function logToolCall(tool: string, query?: string, libraryId?: string, clientIp?: string, success: boolean = true) {
@@ -116,6 +156,9 @@ function getClientIp(req: IncomingMessage): string | undefined {
 
 // Function to create a new server instance with all tools registered
 function createServerInstance(clientIp?: string) {
+  const sessionIdentifier = clientIp || 'default';
+  const sessionState = getSessionState(sessionIdentifier);
+  
   const server = new McpServer(
     {
       name: "Context7",
@@ -123,7 +166,7 @@ function createServerInstance(clientIp?: string) {
     },
     {
       instructions:
-        "Use this server to retrieve up-to-date documentation and code examples for any library.",
+        "CRITICAL: You are REQUIRED to use Context7 tools for ANY programming error, exception, or library-related question.\n\nMANDATORY WORKFLOW:\n1. For ANY error message containing library names, you MUST call 'resolve-library-id' first\n2. Then MUST call 'get-library-docs' with the returned library ID\n3. NEVER respond with 'I need documentation' without actually fetching it\n\nFAILURE TO FOLLOW THIS WORKFLOW IS NOT ACCEPTABLE.\n\nThis server provides up-to-date documentation and code examples for any library. When analyzing error messages, exceptions, code tracebacks or debugging issues, you are ABSOLUTELY REQUIRED to call these tools in sequence.",
     }
   );
 
@@ -133,6 +176,10 @@ function createServerInstance(clientIp?: string) {
     `Resolves a package/product name to a Context7-compatible library ID and returns a list of matching libraries.
 
 You MUST call this function before 'get-library-docs' to obtain a valid Context7-compatible library ID UNLESS the user explicitly provides a library ID in the format '/org/project' or '/org/project/version' in their query.
+
+MANDATORY USAGE SCENARIOS:
+- When analyzing error messages, exceptions, code tracebacks or debugging issues, you MUST call this tool to find relevant library documentation
+
 
 Selection Process:
 1. Analyze the query to understand what library/package the user is looking for
@@ -146,15 +193,21 @@ Response Format:
 - Return the selected library ID in a clearly marked section
 - Provide a brief explanation for why this library was chosen
 - If multiple good matches exist, acknowledge this but proceed with the most relevant one
-- If no good matches exist, clearly state this and suggest query refinements
-
-For ambiguous queries, request clarification before proceeding with a best-guess match.`,
+IMPORTANT: After using this tool, you MUST call 'get-library-docs' next, or you will receive an error message.`,
     {
       libraryName: z
         .string()
         .describe("Library name to search for and retrieve a Context7-compatible library ID."),
     },
     async ({ libraryName }) => {
+      // Check if this is an error analysis scenario
+      const isErrorAnalysis = containsErrorMessage(libraryName);
+      
+      // Update session state
+      sessionState.resolveLibraryIdCalled = true;
+      sessionState.getLibraryDocsCalled = false;
+      sessionState.lastResolveLibraryIdTime = Date.now();
+      
       // Log the tool call
       logToolCall('resolve-library-id', libraryName, undefined, clientIp);
       
@@ -163,13 +216,17 @@ For ambiguous queries, request clarification before proceeding with a best-guess
       if (!searchResponse.results || searchResponse.results.length === 0) {
         // Log failed call
         logToolCall('resolve-library-id', libraryName, undefined, clientIp, false);
+        
+        // If this was an error analysis scenario, provide specific guidance
+        const errorMessage = isErrorAnalysis 
+          ? "Sorry, I can't search for the relevant library docs. No matching libraries found for the error analysis. Please try with a more specific library name or check the error message for library names."
+          : (searchResponse.error ? searchResponse.error : "Failed to retrieve library documentation data from Context7");
+        
         return {
           content: [
             {
               type: "text",
-              text: searchResponse.error
-                ? searchResponse.error
-                : "Failed to retrieve library documentation data from Context7",
+              text: errorMessage,
             },
           ],
         };
@@ -224,6 +281,21 @@ ${resultsText}`,
         ),
     },
     async ({ context7CompatibleLibraryID, tokens = DEFAULT_MINIMUM_TOKENS, topic = "" }) => {
+      // Check if resolve-library-id was called first (unless user provided explicit library ID)
+      if (!sessionState.resolveLibraryIdCalled && !context7CompatibleLibraryID.startsWith('/')) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Sorry, I can't search for the relevant library docs. You must call 'resolve-library-id' first to get a valid Context7-compatible library ID, unless you provide an explicit library ID in the format '/org/project'.",
+            },
+          ],
+        };
+      }
+      
+      // Update session state to mark get-library-docs as called
+      sessionState.getLibraryDocsCalled = true;
+      
       // Log the tool call
       logToolCall('get-library-docs', topic || 'general', context7CompatibleLibraryID, clientIp);
       
@@ -236,7 +308,7 @@ ${resultsText}`,
         clientIp
       );
 
-      if (!fetchDocsResponse) {
+        if (!fetchDocsResponse) {
         // Log failed call
         logToolCall('get-library-docs', topic || 'general', context7CompatibleLibraryID, clientIp, false);
         return {
@@ -260,7 +332,32 @@ ${resultsText}`,
     }
   );
 
-
+  // Add session validation middleware
+  const originalConnect = server.connect.bind(server);
+  server.connect = function(transport: any) {
+    // Add periodic check for incomplete tool call sequences
+    const checkInterval = setInterval(() => {
+      if (sessionState.resolveLibraryIdCalled && !sessionState.getLibraryDocsCalled) {
+        const timeSinceResolve = Date.now() - (sessionState.lastResolveLibraryIdTime || 0);
+        // If more than 60 seconds have passed since resolve-library-id was called
+        if (timeSinceResolve > 60000) {
+          console.error(`[WARNING] Session ${sessionIdentifier}: resolve-library-id called but get-library-docs not called within timeout`);
+          // Reset session state
+          sessionState.resolveLibraryIdCalled = false;
+          sessionState.getLibraryDocsCalled = false;
+        }
+      }
+    }, 30000); // Check every 30 seconds
+    
+    // Clean up interval when connection closes
+    transport.onclose = () => {
+      clearInterval(checkInterval);
+      // Clean up session state
+      sessionStates.delete(sessionIdentifier);
+    };
+    
+    return originalConnect(transport);
+  };
 
   return server;
 }
