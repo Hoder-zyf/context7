@@ -166,20 +166,21 @@ function createServerInstance(clientIp?: string) {
     },
     {
       instructions:
-        "CRITICAL: You are REQUIRED to use Context7 tools for ANY programming error, exception, or library-related question.\n\nMANDATORY WORKFLOW:\n1. For ANY error message containing library names, you MUST call 'resolve-library-id' first\n2. Then MUST call 'get-library-docs' with the returned library ID\n3. NEVER respond with 'I need documentation' without actually fetching it\n\nFAILURE TO FOLLOW THIS WORKFLOW IS NOT ACCEPTABLE.\n\nThis server provides up-to-date documentation and code examples for any library. When analyzing error messages, exceptions, code tracebacks or debugging issues, you are ABSOLUTELY REQUIRED to call these tools in sequence.",
+        "🔗 CONTEXT7 MANDATORY 2-STEP WORKFLOW:\n\n📋 For library/error issues, you MUST complete BOTH steps:\nStep 1: resolve-library-id → Find library ID\nStep 2: get-library-docs → Get documentation\nStep 3: Provide solution based on Step 2 results\n\n⚠️ CRITICAL: Never provide solutions after Step 1 alone. Incomplete workflows give users wrong information.\n\n🎯 Complete both steps every time to ensure accurate, up-to-date solutions based on official documentation.",
     }
   );
 
   // Register Context7 tools
   server.tool(
     "resolve-library-id",
-    `Resolves a package/product name to a Context7-compatible library ID and returns a list of matching libraries.
+    `🔍 STEP 1 OF 2: Resolves a package/product name to a Context7-compatible library ID and returns a list of matching libraries.
+
+⚠️ CRITICAL: You MUST call 'get-library-docs' next after this tool, or you will receive an error message.
 
 You MUST call this function before 'get-library-docs' to obtain a valid Context7-compatible library ID UNLESS the user explicitly provides a library ID in the format '/org/project' or '/org/project/version' in their query.
 
 MANDATORY USAGE SCENARIOS:
 - When analyzing error messages, exceptions, code tracebacks or debugging issues, you MUST call this tool to find relevant library documentation
-
 
 Selection Process:
 1. Analyze the query to understand what library/package the user is looking for
@@ -193,7 +194,8 @@ Response Format:
 - Return the selected library ID in a clearly marked section
 - Provide a brief explanation for why this library was chosen
 - If multiple good matches exist, acknowledge this but proceed with the most relevant one
-IMPORTANT: After using this tool, you MUST call 'get-library-docs' next, or you will receive an error message.`,
+
+🔗 NEXT MANDATORY STEP: Call 'get-library-docs' with the returned library ID to complete the workflow.`,
     {
       libraryName: z
         .string()
@@ -261,7 +263,7 @@ ${resultsText}`,
 
   server.tool(
     "get-library-docs",
-    "Fetches up-to-date documentation for a library. You must call 'resolve-library-id' first to obtain the exact Context7-compatible library ID required to use this tool, UNLESS the user explicitly provides a library ID in the format '/org/project' or '/org/project/version' in their query.",
+    "✅ STEP 2: Fetches comprehensive, up-to-date documentation for a library.\n\nYou must call 'resolve-library-id' first to obtain the exact Context7-compatible library ID required to use this tool, UNLESS the user explicitly provides a library ID in the format '/org/project' or '/org/project/version' in their query.\n\n🎯 This step provides the official documentation needed to give users accurate solutions.",
     {
       context7CompatibleLibraryID: z
         .string()
