@@ -342,7 +342,7 @@ ${resultsText}`,
       if (sessionState.resolveLibraryIdCalled && !sessionState.getLibraryDocsCalled) {
         const timeSinceResolve = Date.now() - (sessionState.lastResolveLibraryIdTime || 0);
         // If more than 60 seconds have passed since resolve-library-id was called
-        if (timeSinceResolve > 60000) {
+        if (timeSinceResolve > 75000) {
           console.error(`[WARNING] Session ${sessionIdentifier}: resolve-library-id called but get-library-docs not called within timeout`);
           // Reset session state
           sessionState.resolveLibraryIdCalled = false;
