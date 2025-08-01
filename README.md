@@ -817,6 +817,30 @@ See [LM Studio MCP Support](https://lmstudio.ai/blog/lmstudio-v0.3.17) for more 
 4. Toggle the MCP server on/off from the right hand side, under `Program`, or by clicking the plug icon at the bottom of the chat box.
 
 </details>
+<details>
+<summary><b>Install in Perplexity Desktop</b></summary>
+
+See [Local and Remote MCPs for Perplexity](https://www.perplexity.ai/help-center/en/articles/11502712-local-and-remote-mcps-for-perplexity) for more information.
+
+1. Navigate `Perplexity` > `Settings`
+2. Select `Connectors`.
+3. Click `Add Connector`.
+4. Select `Advanced`.
+5. Enter Server Name: `Context7`
+6. Paste the following JSON in the text area:
+
+```json
+{
+  "args" : [
+    "-y",
+    "@upstash/context7-mcp"
+  ],
+  "command" : "npx",
+  "env" : {}
+}
+```
+7. Click `Save`.
+</details>
 
 ## 🔨 Available Tools
 
